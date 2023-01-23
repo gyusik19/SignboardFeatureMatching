@@ -259,7 +259,6 @@ def process_resize(w, h, resize):
 def frame2tensor(frame, device):
     return torch.from_numpy(frame/255.).float()[None, None].to(device)
 
-
 def read_image(path, device, resize, rotation, resize_float):
     image = cv2.imread(str(path), cv2.IMREAD_GRAYSCALE)
     if image is None:
@@ -480,6 +479,92 @@ def make_matching_plot(image0, image1, kpts0, kpts1, mkpts0, mkpts1,
     plt.savefig(str(path), bbox_inches='tight', pad_inches=0)
     plt.close()
 
+def idx_pts_bbox(pts, xyxy):
+    ret = []
+    min_x, min_y, max_x, max_y = xyxy
+    for i in range(len(pts)):
+        x, y = pts[i]
+        if x >= min_x and x <= max_x and y >= min_y and y <= max_y:
+            ret.append(i)
+    return ret
+
+def draw_bbox_matched(image0, image1, mkpts0, mkpts1, path=None, margin=10,
+                        bbox_0=[], bbox_1=[]):
+    H0, W0, _ = image0.shape
+    H1, W1, _ = image1.shape
+    H, W = max(H0, H1), W0 + W1 + margin
+
+    out = 255*np.ones((H, W, 3), np.uint8)
+    out[:H0, :W0] = image0
+    out[:H1, W0+margin:] = image1
+    mkpts0, mkpts1 = np.round(mkpts0).astype(int), np.round(mkpts1).astype(int)
+    H0, W0 = image0.shape[0:2]
+    H1, W1 = image1.shape[0:2]
+    for xywh in bbox_1:
+        x_center = W1 * xywh[0]
+        y_center = H1 * xywh[1]
+        bbox_w = W1 * xywh[2]
+        bbox_h = H1 * xywh[3]
+        min_x, min_y = int(x_center - bbox_w / 2), int(y_center - bbox_h / 2)
+        max_x, max_y = min_x + int(bbox_w), min_y + int(bbox_h)
+        xyxy = (min_x + margin + W0, min_y, min_x + int(bbox_w), min_y + int(bbox_h))
+        cv2.rectangle(out, (min_x + margin + W0, min_y, int(bbox_w), int(bbox_h)), (0, 0, 255), 3)
+
+    for xywh in bbox_0:
+        selected_xywh1 = []
+        x_center = W0 * xywh[0]
+        y_center = H0 * xywh[1]
+        bbox_w = W0 * xywh[2]
+        bbox_h = H0 * xywh[3]
+        min_x, min_y = int(x_center - bbox_w / 2), int(y_center - bbox_h / 2)
+        max_x, max_y = min_x + int(bbox_w), min_y + int(bbox_h)
+        xyxy = (min_x, min_y, min_x + int(bbox_w), min_y + int(bbox_h))
+        filtered_points_idx = idx_pts_bbox(mkpts0, xyxy)
+        filtered_points = [mkpts1[idx] for idx in filtered_points_idx]
+        max_match = 0
+        box_idx = -1
+        for i in range(len(bbox_1)):
+            xywh1 = bbox_1[i]
+            x_center_1 = W0 * xywh1[0]
+            y_center_1 = H0 * xywh1[1]
+            bbox_w_1 = W0 * xywh1[2]
+            bbox_h_1 = H0 * xywh1[3]
+            min_x_1, min_y_1 = int(x_center_1 - bbox_w_1 / 2), int(y_center_1 - bbox_h_1 / 2)
+            max_x_1, max_y_1 = min_x_1 + int(bbox_w_1), min_y_1 + int(bbox_h_1)
+            xyxy_1 = (min_x_1, min_y_1, min_x_1 + int(bbox_w_1), min_y_1 + int(bbox_h_1))
+            filtered_points_1 = idx_pts_bbox(filtered_points, xyxy_1)
+            if len(filtered_points_1) > max_match:
+                max_match = len(filtered_points_1)
+                box_idx = i
+        selected_xywh1 = bbox_1[box_idx]
+        xywh = selected_xywh1
+        x_c1, y_c1 = x_center, y_center
+        # x_c2, y_c2 = W0 * xywh[0], H0 * xywh[1]
+
+        if max_match < -1:
+            color = (0, 0, 255)
+            cv2.rectangle(out, (min_x, min_y, int(bbox_w), int(bbox_h)), color, 3)
+        else:
+            box_color = (0, 255, 0)
+            if max_match < 4 :
+                box_color = (0, 0, 255)
+            color = (np.random.randint(0,255), np.random.randint(0,255), np.random.randint(0,255))
+            # color = (0,255,0)
+            cv2.rectangle(out, (min_x, min_y, int(bbox_w), int(bbox_h)), box_color, 3)
+            x_center = W1 * xywh[0]
+            y_center = H1 * xywh[1]
+            bbox_w = W1 * xywh[2]
+            bbox_h = H1 * xywh[3]
+            min_x, min_y = int(x_center - bbox_w / 2), int(y_center - bbox_h / 2)
+            max_x, max_y = min_x + int(bbox_w), min_y + int(bbox_h)
+            xyxy = (min_x + margin + W0, min_y, min_x + int(bbox_w), min_y + int(bbox_h))
+            cv2.rectangle(out, (min_x + margin + W0, min_y, int(bbox_w), int(bbox_h)), box_color, 3)
+            if max_match >= 4:
+                cv2.line(out, (int(x_c1), int(y_c1)), (int(x_center) + margin + W0, int(y_center)), color=color, thickness=2, lineType=cv2.LINE_AA)
+    
+    
+
+    return out
 
 def make_matching_plot_fast(image0, image1, kpts0, kpts1, mkpts0,
                             mkpts1, color, text, path=None,

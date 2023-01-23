@@ -49,10 +49,10 @@ import argparse
 import cv2
 import matplotlib.cm as cm
 import torch
-
+import numpy as np
 from models.matching import Matching
 from models.utils import (AverageTimer, VideoStreamer,
-                          make_matching_plot_fast, frame2tensor)
+                          make_matching_plot_fast, frame2tensor, draw_bbox_matched, process_resize)
 
 torch.set_grad_enabled(False)
 
@@ -66,7 +66,7 @@ if __name__ == '__main__':
         help='ID of a USB webcam, URL of an IP camera, '
              'or path to an image directory or movie file')
     parser.add_argument(
-        '--output_dir', type=str, default=None,
+        '--output_dir', type=str, default=None, 
         help='Directory where to write output frames (If None, no output)')
 
     parser.add_argument(
@@ -115,6 +115,11 @@ if __name__ == '__main__':
         '--force_cpu', action='store_true',
         help='Force pytorch to run in CPU mode.')
 
+    parser.add_argument(
+        '--bbox', action='store_true',
+        help = 'Bounding box file'
+    )
+
     opt = parser.parse_args()
     print(opt)
 
@@ -151,7 +156,7 @@ if __name__ == '__main__':
                        opt.image_glob, opt.max_length)
     frame, ret = vs.next_frame()
     assert ret, 'Error when reading the first frame (try different --input?)'
-
+    
     frame_tensor = frame2tensor(frame, device)
     last_data = matching.superpoint({'image': frame_tensor})
     last_data = {k+'0': last_data[k] for k in keys}
@@ -200,6 +205,7 @@ if __name__ == '__main__':
         mkpts0 = kpts0[valid]
         mkpts1 = kpts1[matches[valid]]
         color = cm.jet(confidence[valid])
+        print('num points : ', len(mkpts0))
         text = [
             'SuperGlue',
             'Keypoints: {}:{}'.format(len(kpts0), len(kpts1)),
@@ -212,9 +218,41 @@ if __name__ == '__main__':
             'Match Threshold: {:.2f}'.format(m_thresh),
             'Image Pair: {:06}:{:06}'.format(stem0, stem1),
         ]
+
+        if opt.bbox:
+            # img0 = cv2.imread(str(vs.listing[0]), 1)
+            # img1 = cv2.imread(str(vs.listing[1]), 1)
+            img0 = cv2.imread('samples/panorama/org/790/19.jpg')
+            img1 = cv2.imread('samples/panorama/org/790/21.jpg')
+            bbox_file0 = str(vs.listing[0]).split('.')[0] + '.txt'
+            bbox_file1 = str(vs.listing[1]).split('.')[0] + '.txt'
+            bbox_0 = []
+            bbox_1 = []
+            with open(bbox_file0, 'r') as f0:
+                while True:
+                    line = f0.readline()
+                    if not line : break
+                    tmp = [float(num) for num in line.split(' ')[1:]]
+                    bbox_0.append(tmp)
+            with open(bbox_file1, 'r') as f1:
+                while True:
+                    line = f1.readline()
+                    if not line : break
+                    tmp = [float(num) for num in line.split(' ')[1:]]
+                    bbox_1.append(tmp)
+            w, h = img0.shape[1], img0.shape[0]
+            w_new, h_new = process_resize(w, h, opt.resize)
+            img0 = cv2.resize(img0, (w_new, h_new),
+                               interpolation=cv2.INTER_AREA)
+            img1 = cv2.resize(img1, (w_new, h_new),
+                               interpolation=cv2.INTER_AREA)
+            tmp_out = draw_bbox_matched(img0, img1, mkpts0, mkpts1, bbox_0=bbox_0, bbox_1=bbox_1)
+            cv2.imwrite(opt.output_dir + '/test.jpg', tmp_out)
+
         out = make_matching_plot_fast(
             last_frame, frame, kpts0, kpts1, mkpts0, mkpts1, color, text,
             path=None, show_keypoints=opt.show_keypoints, small_text=small_text)
+        # np.savez(opt.input+'match_res', pts_db = mkpts0, pts_query = mkpts1)
 
         if not opt.no_display:
             cv2.imshow('SuperGlue matches', out)
@@ -257,3 +295,5 @@ if __name__ == '__main__':
 
     cv2.destroyAllWindows()
     vs.cleanup()
+
+
